@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: GearSetTools
+## Notes: Marks equipment-set items and compares gear against saved sets, including cached bank items.
+## Author: lehadnk
+## X-Website: https://github.com/lehadnk/GearSetTools
+## Version: 0.2.2
+## SavedVariables: GearSetToolsDB
+
+GearSetTools.lua
+SetCache.lua
+SetCompare.lua
