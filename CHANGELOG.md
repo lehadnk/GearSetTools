@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — 0.2.4-dev
+
+- Release comparison anchors when the shared tooltip changes item or owner.
+- Keep quest items and other non-equippable loot on the native tooltip path.
+- Clear stale comparison state when loot opens/closes or the source tooltip hides.
+- Add tests for gear-to-quest transitions and native loot content preservation.
+
 ## 0.2.3 ? 2026-11-15
 
 Tooltip stability and layout fixes, verified in game.

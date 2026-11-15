@@ -2,7 +2,7 @@
 
 Find your set gear at a glance, and compare new loot with every saved equipment set.
 
-**Version:** 0.2.3 beta · **Client:** WoW Forever 1.60.1 · **Interface:** 16001
+**Version:** 0.2.4 beta · **Client:** WoW Forever 1.60.1 · **Interface:** 16001
 
 ## Features
 
@@ -90,7 +90,7 @@ python tests/test_comparison.py
 python tools/package.py
 ```
 
-The packaging script writes `dist/GearSetTools-0.2.3.zip`, containing only the
+The packaging script writes `dist/GearSetTools-0.2.4.zip`, containing only the
 installable addon and its documentation, with a top-level `GearSetTools` folder.
 
 Offline regression tests in `tests/test_comparison.py` use Lupa's Lua 5.1
@@ -103,5 +103,5 @@ appearance and compatibility with future Forever builds should be verified in ga
 
 MIT. See [LICENSE](LICENSE).
 
-Public releases use matching TOC versions, Git tags (`v0.2.3`), and ZIP filenames.
+Public releases use matching TOC versions, Git tags (`v0.2.4`), and ZIP filenames.
 Local work between releases should use an `-dev` suffix rather than creating a new public release for each edit.

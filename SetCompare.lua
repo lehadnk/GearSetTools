@@ -179,13 +179,20 @@ local function Hide()
     original, sourcePosition = nil, nil
     if restore then
         restore.tooltip:SetScale(restore.scale)
-        restore.tooltip:ClearAllPoints()
-        for _, point in ipairs(restore.points) do restore.tooltip:SetPoint(unpack(point)) end
+        -- The shared tooltip may already belong to a loot/quest/unit button.
+        -- Never restore old item anchors onto that new tooltip.
+        if restore.tooltip:IsShown() and TooltipLink(restore.tooltip) == restore.link
+            and Call(restore.tooltip.GetOwner, restore.tooltip) == restore.owner then
+            restore.tooltip:ClearAllPoints()
+            for _, point in ipairs(restore.points) do restore.tooltip:SetPoint(unpack(point)) end
+        end
     end
     signature, source = nil, nil
 end
 local function PositionSource()
     if positioningSource or not original or not sourcePosition then return end
+    if not original.tooltip:IsShown() or TooltipLink(original.tooltip) ~= original.link
+        or Call(original.tooltip.GetOwner, original.tooltip) ~= original.owner then return end
     positioningSource = true
     local tooltip, pos = original.tooltip, sourcePosition
     local point, relative, relativePoint, x, y = tooltip:GetPoint(1)
@@ -269,11 +276,13 @@ end
 local function Render(tooltip, link)
     cards = Compare.BuildCards(link)
     if #cards == 0 then Hide(); return end
-    if original and original.tooltip ~= tooltip then Hide() end
+    if original and (original.tooltip ~= tooltip or original.link ~= link
+        or original.owner ~= Call(tooltip.GetOwner, tooltip)) then Hide() end
     if not original then
         local points = {}
         for index = 1, tooltip:GetNumPoints() do points[index] = {tooltip:GetPoint(index)} end
-        original = {tooltip = tooltip, scale = tooltip:GetScale(), points = points,
+        original = {tooltip = tooltip, link = link, owner = Call(tooltip.GetOwner, tooltip),
+            scale = tooltip:GetScale(), points = points,
             left = (tooltip:GetLeft() or 0) * tooltip:GetEffectiveScale() / UIParent:GetEffectiveScale(),
             top = (tooltip:GetTop() or UIParent:GetHeight()) * tooltip:GetEffectiveScale() / UIParent:GetEffectiveScale()}
     end
@@ -327,7 +336,8 @@ local function Update(tooltip)
     if not tooltip or not tooltip:IsShown() or not WantsComparison() then Hide(); return end
     local link = TooltipLink(tooltip)
     Compare.lastLink, Compare.lastEquipType = link, link and EquipType(link)
-    if not link then Hide(); return end
+    -- Quest items, currency, recipes and ordinary loot keep Blizzard's tooltip.
+    if not link or not slotsByType[Compare.lastEquipType] then Hide(); cards = {}; return end
     local key = link .. ":" .. Cache.revision .. ":" .. page
     if source == tooltip and signature == key then SuppressNative(tooltip); PositionSource(); return end
     if source ~= tooltip or (signature and signature:sub(1, #link) ~= link) then page = 1 end
@@ -374,6 +384,13 @@ function Compare.DebugHover()
     C_Timer.After(3, function() xpcall(Compare.Debug, ReportError) end)
 end
 local watcher = CreateFrame("Frame")
+watcher:SetScript("OnEvent", function()
+    -- Release stale ownership before the loot UI is populated or torn down.
+    Hide()
+    cards = {}
+end)
+watcher:RegisterEvent("LOOT_OPENED")
+watcher:RegisterEvent("LOOT_CLOSED")
 local elapsed, altWasDown = 0, false
 local function OnUpdate(_, delta)
     -- Reapply before this frame is drawn, including engine-driven anchoring
@@ -398,6 +415,9 @@ end)
 for _, name in ipairs({"GameTooltip", "GameTooltipTooltip", "ItemRefTooltip"}) do
     local tooltip = _G[name]
     if tooltip then
+    tooltip:HookScript("OnHide", function()
+        if original and original.tooltip == tooltip then Hide(); cards = {} end
+    end)
     -- Blizzard reanchors a live item tooltip repeatedly. Correct that in the
     -- same call, rather than visibly moving it back on the next 0.1s timer tick.
     for _, method in ipairs({"SetPoint", "SetAnchorType"}) do

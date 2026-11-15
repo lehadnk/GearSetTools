@@ -266,7 +266,7 @@ SLASH_GEARSETTOOLS1 = "/gst"
 SLASH_GEARSETTOOLS2 = "/gearsettools"
 local function HandleCommand(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
-    print("GearSetTools 0.2.3: command received.")
+    print("GearSetTools 0.2.4: command received.")
     if msg == "comparedebug" and NS.Compare then
         NS.Compare.DebugHover()
     elseif msg == "next" and NS.Compare then
