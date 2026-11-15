@@ -25,11 +25,15 @@ function methods:Show()
     else self.shown=true end
 end
 function methods:Hide()
+    local wasShown=self.shown
     self.shown = false
     if self.kind=='GameTooltip' and self.name and self.name:find('GearSetToolsCompare',1,true) then
         self.lines={}; self.link=nil
     end
+    if wasShown and self.scripts and self.scripts.OnHide then self.scripts.OnHide(self) end
 end
+function methods:GetOwner() return self.owner end
+function methods:SetOwner(owner) self.owner=owner end
 function methods:IsShown() return self.shown end
 function methods:IsObjectType(name) return self.kind == name end
 function methods:GetChildren() return unpack(self.children) end
@@ -61,7 +65,7 @@ function methods:SetTexture(texture) self.texture = texture end
 function methods:CreateTexture() return setmetatable({}, {__index = methods}) end
 function methods:CreateFontString() return setmetatable({}, {__index = methods}) end
 for _, name in ipairs({'SetFrameStrata','EnableMouse','SetClampedToScreen','SetBackdrop','SetBackdropColor',
-    'SetBackdropBorderColor','SetAllPoints','SetJustifyH','SetOwner','SetFrameLevel','SetTexCoord'}) do
+    'SetBackdropBorderColor','SetAllPoints','SetJustifyH','SetFrameLevel','SetTexCoord'}) do
     methods[name] = function() end
 end
 function CreateFrame(kind, name, parent)
@@ -386,6 +390,44 @@ GameTooltipTooltip.link='item:201'; GameTooltipTooltip:Show(); Tick()
 assert(GearSetToolsCompare1:IsShown(),'embedded item tooltip is discovered')
 ''')
 print("PASS: modern tooltip payloads, exact GUID links, embedded tooltips, Always Compare without Shift")
+
+loot = new_runtime()
+loot.execute(r'''
+inventory[6]='item:300'
+local bagButton=CreateFrame('Button')
+local lootButton=CreateFrame('Button')
+GameTooltip:SetOwner(bagButton)
+GameTooltip.link='item:200'; GameTooltip:Show(); compareHeld=true; Tick()
+assert(GearSetToolsCompare1:IsShown())
+-- A new loot button takes ownership before its item data has been set.
+GameTooltip:SetOwner(lootButton)
+GameTooltip:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',51,67)
+assert(GameTooltip.point[5]==67,'old comparison must not hijack a new loot owner')
+equipTypes['item:900']='' -- quest item, not equippable
+GameTooltip.link='item:900'; GameTooltip.lines={'Quest item', 'Required for a quest'}
+Tick()
+assert(not GearSetToolsCompare1:IsShown())
+assert(GameTooltip:IsShown() and GameTooltip.link=='item:900' and #GameTooltip.lines==2)
+assert(GameTooltip.point[1]=='BOTTOMLEFT' and GameTooltip.point[5]==67,'quest tooltip anchors preserved')
+-- The same owner can switch from gear to quest loot too.
+GameTooltip.link='item:200'; Tick(); assert(GearSetToolsCompare1:IsShown())
+GameTooltip.link='item:900'; GameTooltip.lines={'Quest loot'}
+GameTooltip:SetPoint('TOPRIGHT',UIParent,'TOPRIGHT',-13,-24)
+Tick()
+assert(GameTooltip.point[1]=='TOPRIGHT' and GameTooltip.point[5]==-24)
+assert(GameTooltip.lines[1]=='Quest loot')
+-- Loot event lifecycle clears comparisons without changing loot content.
+LootFrame=CreateFrame('Frame'); LootFrame:Show()
+LootFrame.slots={{link='item:900',quest=true}}
+GameTooltip.link='item:200'; Tick(); assert(GearSetToolsCompare1:IsShown())
+Event('LOOT_OPENED')
+assert(not GearSetToolsCompare1:IsShown())
+assert(LootFrame:IsShown() and #LootFrame.slots==1 and LootFrame.slots[1].quest)
+GameTooltip:Hide(); Tick()
+GameTooltip:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',10,20)
+assert(GameTooltip.point[5]==20,'hidden source releases anchor hooks')
+''')
+print("PASS: gear-to-quest loot transitions, owner changes, native quest content/anchors, loot lifecycle")
 
 for path in ROOT.glob("*.lua"):
     lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
