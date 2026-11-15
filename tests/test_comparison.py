@@ -10,6 +10,7 @@ from lupa.lua51 import LuaRuntime
 ROOT = Path(__file__).resolve().parents[1]
 STUBS = r'''
 NS = {}
+SlashCmdList = {}
 frames, timers, messages = {}, {}, {}
 local methods = {}
 function methods:SetScript(name, fn) self.scripts[name] = fn end
@@ -18,8 +19,17 @@ function methods:HookScript(name, fn)
     self.scripts[name] = function(...) if prev then prev(...) end; fn(...) end
 end
 function methods:RegisterEvent(name) self.events[name] = true end
-function methods:Show() self.shown = true end
-function methods:Hide() self.shown = false end
+function methods:Show()
+    if self.kind=='GameTooltip' and #self.lines==0 and not self.link and not self.GetPrimaryTooltipData then
+        self.shown=false
+    else self.shown=true end
+end
+function methods:Hide()
+    self.shown = false
+    if self.kind=='GameTooltip' and self.name and self.name:find('GearSetToolsCompare',1,true) then
+        self.lines={}; self.link=nil
+    end
+end
 function methods:IsShown() return self.shown end
 function methods:IsObjectType(name) return self.kind == name end
 function methods:GetChildren() return unpack(self.children) end
@@ -39,13 +49,14 @@ function methods:GetTop() return 700 end
 function methods:GetName() return self.name end
 function methods:GetID() return 0 end
 function methods:GetFrameLevel() return 5 end
-function methods:SetPoint(...) self.point = {...} end
+function methods:SetPoint(...) self.point = {...}; self.setPointCalls=(self.setPointCalls or 0)+1 end
 function methods:ClearAllPoints() self.point = nil end
 function methods:ClearLines() self.lines = {}; self.link = nil end
 function methods:AddLine(text) self.lines[#self.lines+1] = text end
 function methods:SetHyperlink(link) self.link = link; self.lines = {link} end
 function methods:GetItem() return 'item', self.link end
 function methods:SetText(text) self.text = text end
+function methods:GetStringHeight() return math.ceil(#(self.text or '') * 7 / (self.width or 200)) * 14 end
 function methods:SetTexture(texture) self.texture = texture end
 function methods:CreateTexture() return setmetatable({}, {__index = methods}) end
 function methods:CreateFontString() return setmetatable({}, {__index = methods}) end
@@ -63,7 +74,15 @@ end
 UIParent = CreateFrame('Frame'); UIParent:SetSize(1600,900); UIParent:Show()
 GameTooltip = CreateFrame('GameTooltip'); GameTooltip.shoppingTooltips = {CreateFrame('GameTooltip'),CreateFrame('GameTooltip')}
 ItemRefTooltip = CreateFrame('GameTooltip')
-function hooksecurefunc() end
+function hooksecurefunc(object, method, callback)
+    if type(object)=='string' then return end
+    local original=object[method]
+    object[method]=function(...)
+        local result={original(...)}
+        callback(...)
+        return unpack(result)
+    end
+end
 function GetLocale() return 'enUS' end
 function UnitGUID() return playerGUID or 'Player-A' end
 function time() return 123456 end
@@ -113,9 +132,11 @@ function LoadModule(code) assert(loadstring(code))('GearSetTools',NS) end
 '''
 
 
-def new_runtime():
+def new_runtime(with_markers=False):
     lua = LuaRuntime(unpack_returned_tuples=True)
     lua.execute(STUBS)
+    if with_markers:
+        lua.globals().LoadModule((ROOT / "GearSetTools.lua").read_text(encoding="utf-8"))
     lua.globals().LoadModule((ROOT / "SetCache.lua").read_text(encoding="utf-8"))
     lua.globals().LoadModule((ROOT / "SetCompare.lua").read_text(encoding="utf-8"))
     return lua
@@ -250,8 +271,20 @@ Tick()
 assert(GearSetToolsCompare1:IsShown() and GearSetToolsCompare2:IsShown())
 assert(GearSetToolsCompare2.link=='item:100:enchant:healing', 'renders exact full tooltip')
 assert(GearSetToolsCompare2.gstHeader.label.text=='Restoration')
+local stableX,stableY=GameTooltip.point[4],GameTooltip.point[5]
+local anchorCalls=GameTooltip.setPointCalls
+Tick(); Tick()
+assert(GameTooltip.setPointCalls==anchorCalls,'stable anchors are not cleared and rewritten every frame')
+assert(GearSetToolsCompare1.gstHeader:GetHeight()>=GearSetToolsCompare1.gstHeader.label:GetStringHeight()+12)
+for i=1,20 do
+    GameTooltip:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',200,100+i)
+    assert(GameTooltip.point[1]=='TOPLEFT' and GameTooltip.point[4]==stableX and GameTooltip.point[5]==stableY,
+        'native reposition must be corrected synchronously, before the next timer tick')
+end
 compareHeld=false; Tick()
 assert(not GearSetToolsCompare1:IsShown() and not GearSetToolsCompare2:IsShown(), 'hide on Shift release')
+GameTooltip:SetPoint('BOTTOMLEFT',UIParent,'BOTTOMLEFT',200,100)
+assert(GameTooltip.point[1]=='BOTTOMLEFT' and GameTooltip.point[5]==100,'release anchor control outside comparison')
 compareHeld=true; Tick(); GameTooltip:Hide(); Tick()
 assert(not GearSetToolsCompare1:IsShown(), 'hide when original tooltip disappears')
 -- Many full tooltips must page, without going beyond the screen.
@@ -266,6 +299,7 @@ for i=1,13 do
     local tip=_G['GearSetToolsCompare'..i]
     if before[i]~=tip:IsShown() then changed=true end
     if tip:IsShown() then
+        assert(tip.link and #tip.lines>0,'visible comparisons retain full item data after layout')
         local x,y=tip.point[4]*tip.scale,tip.point[5]*tip.scale
         assert(x>=0 and x+tip:GetWidth()*tip.scale<=UIParent:GetWidth()+1)
         assert(y-tip:GetHeight()*tip.scale>=0 and y+25*tip.scale<=UIParent:GetHeight()+1)
@@ -279,9 +313,79 @@ local firstTip
 for i=1,13 do if _G['GearSetToolsCompare'..i]:IsShown() then firstTip=_G['GearSetToolsCompare'..i]; break end end
 assert(firstTip.point[4]*firstTip.scale > candidateX and firstTip.point[5]*firstTip.scale == candidateY,
     'hovered item comes immediately before comparison cards')
+for iteration=1,10 do
+    NS.Compare.NextPage()
+    local shown=0
+    for i=1,13 do
+        local tip=_G['GearSetToolsCompare'..i]
+        if tip:IsShown() then assert(tip.link and #tip.lines>0); shown=shown+1 end
+    end
+    assert(shown>0,'page cycling refills tooltips cleared by OnHide')
+end
 compareHeld=false; Tick(); assert(GameTooltip:GetScale()==1,'restore candidate scale on Shift release')
 ''')
 print("PASS: full tooltip rendering, headers, visibility, screen bounds, comparison pages")
+
+lua.execute(r'''
+local sizes={{width=250,height=300},{width=170,height=350},{width=160,height=250},{width=180,height=260}}
+local pages=NS.Compare.Layout(sizes,1000,600,8)
+assert(#pages==1)
+assert(pages[1].positions[2].x==258 and pages[1].positions[3].x==436 and pages[1].positions[4].x==604,
+    'narrow tooltips follow actual preceding width, with exactly 8px spacing')
+local seen={}
+pages=NS.Compare.Layout(sizes,440,400,8)
+for _,p in ipairs(pages) do
+    assert(p.positions[1].index==1,'candidate first on every page')
+    for _,pos in ipairs(p.positions) do
+        local size=sizes[pos.index]
+        assert(pos.x+size.width<=440 and pos.y+size.height<=400,'all cards inside page bounds')
+        if pos.index>1 then assert(not seen[pos.index]); seen[pos.index]=true end
+    end
+end
+assert(seen[2] and seen[3] and seen[4],'pagination preserves every comparison')
+''')
+print("PASS: compact variable-width layout, pagination bounds, stable anchors, wrapped header height")
+
+startup = new_runtime(with_markers=True)
+startup.execute(r'''
+sets[0]={name='Restoration',icon=123,items={[6]=100},locations={[6]=1048582}}
+inventory[6]='item:100'; locations[1048582]={isPlayer=true,slot=6}
+ContainerFrameCombinedBags=CreateFrame('Frame'); ContainerFrameCombinedBags:Show()
+local button=CreateFrame('Button',nil,ContainerFrameCombinedBags)
+button.itemID=100; button:Show()
+Event('PLAYER_LOGIN')
+assert(NS.Compare.ready,'all three TOC modules initialize together')
+assert(button.children[1] and button.children[1]:IsShown(),'anonymous combined-bag buttons get set badges')
+compareHeld=true; GameTooltip.link='item:200'; GameTooltip:Show(); Tick()
+assert(GearSetToolsCompare1:IsShown(),'comparison works with markers active')
+SlashCmdList.GEARSETTOOLS('debug')
+local healthy=false
+for _,message in ipairs(messages) do
+    assert(not message:find('attempt to',1,true),message)
+    if message:find('compare module=true',1,true) then healthy=true end
+end
+assert(healthy,'slash command includes comparison module diagnostics')
+''')
+print("PASS: complete TOC startup, anonymous combined-bag badges, comparison and slash diagnostics together")
+
+modern = new_runtime()
+modern.execute(r'''
+inventory[6]='item:300'
+GameTooltip.GetItem=function() return nil end
+GameTooltip.GetPrimaryTooltipData=function() return {hyperlink='item:200'} end
+C_CVar.GetCVarBool=function() return true end
+compareHeld=false; GameTooltip:Show(); Tick()
+assert(GearSetToolsCompare1 and GearSetToolsCompare1:IsShown(),'modern tooltip data works without GetItem or Shift')
+assert(NS.Compare.TooltipLink(GameTooltip)=='item:200')
+GameTooltip.GetPrimaryTooltipData=function() return {guid='test-guid'} end
+C_Item.GetItemLinkByGUID=function(guid) assert(guid=='test-guid'); return 'item:200' end
+assert(NS.Compare.TooltipLink(GameTooltip)=='item:200','GUID resolves exact hyperlink')
+GameTooltip:Hide()
+GameTooltipTooltip=CreateFrame('GameTooltip')
+GameTooltipTooltip.link='item:201'; GameTooltipTooltip:Show(); Tick()
+assert(GearSetToolsCompare1:IsShown(),'embedded item tooltip is discovered')
+''')
+print("PASS: modern tooltip payloads, exact GUID links, embedded tooltips, Always Compare without Shift")
 
 for path in ROOT.glob("*.lua"):
     lua.execute("assert(loadstring(...))", path.read_text(encoding="utf-8"))
