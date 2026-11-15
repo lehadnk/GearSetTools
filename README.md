@@ -35,6 +35,20 @@ The hovered item remains first on every page.
 
 No other addons are required. Existing Blizzard equipment sets are used directly.
 
+## Screenshots
+
+### Compare against equipped and banked set items
+
+![Full set comparisons, including a cached Restoration item](comparison.png)
+
+### Equipment-set badges in the bank
+
+![Set icons on banked equipment](bank.png)
+
+### Equipment-set badges in bags
+
+![Set icons in the combined backpack](bags.png)
+
 ## Bank cache and item variants
 
 Bank scans save complete item links, including random variants and enchants,
@@ -83,3 +97,7 @@ runtime with WoW API stubs. They cover bank variants, persisted snapshots,
 set changes, slot alternatives, native and fallback deltas, two-handed
 replacement, tooltip visibility, pagination, and screen bounds. Native tooltip
 appearance and compatibility with future Forever builds should be verified in game.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
