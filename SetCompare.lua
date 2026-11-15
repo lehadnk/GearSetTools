@@ -6,6 +6,13 @@ local tips, cards = {}, {}
 local source, signature, page, pageCount, busy = nil, nil, 1, 1, false
 local lastError
 local original, sourcePosition
+local positioningSource = false
+local function ReportError(err)
+    positioningSource = false
+    local message = tostring(err)
+    if lastError ~= message then print("GearSetTools compare: " .. message) end
+    lastError = message
+end
 local ru = GetLocale() == "ruRU"
 local function L(en, russian) return ru and russian or en end
 local slotsByType = {
@@ -37,6 +44,19 @@ local function EquipType(link)
     local ok, _, _, _, equipType = pcall(fn, link)
     if ok then return equipType end
 end
+local function TooltipLink(tooltip)
+    if not tooltip then return nil end
+    if type(tooltip.GetItem) == "function" then
+        local ok, _, link = pcall(tooltip.GetItem, tooltip)
+        if ok and type(link) == "string" and link:find("item:", 1, true) then return link end
+    end
+    local data = Call(tooltip.GetPrimaryTooltipData, tooltip) or Call(tooltip.GetTooltipData, tooltip)
+    if data then
+        if type(data.hyperlink) == "string" and data.hyperlink:find("item:", 1, true) then return data.hyperlink end
+        if data.guid then return Call(C_Item and C_Item.GetItemLinkByGUID, data.guid) end
+    end
+end
+Compare.TooltipLink = TooltipLink
 function Compare.BuildCards(link)
     local equipType = EquipType(link)
     local slots = slotsByType[equipType]
@@ -147,7 +167,6 @@ local function GetTip(index)
     header.icon:SetPoint("LEFT", 4, 0)
     header.label = header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     header.label:SetPoint("LEFT", header.icon, "RIGHT", 5, 0)
-    header.label:SetPoint("RIGHT", -5, 0)
     header.label:SetJustifyH("LEFT")
     tip.gstHeader = header
     tips[index] = tip
@@ -155,20 +174,32 @@ local function GetTip(index)
 end
 local function Hide()
     for _, tip in ipairs(tips) do tip:Hide() end
-    if original then
-        original.tooltip:SetScale(original.scale)
-        original.tooltip:ClearAllPoints()
-        for _, point in ipairs(original.points) do original.tooltip:SetPoint(unpack(point)) end
-    end
+    local restore = original
+    -- Disable anchor hooks before restoring Blizzard's original position.
     original, sourcePosition = nil, nil
+    if restore then
+        restore.tooltip:SetScale(restore.scale)
+        restore.tooltip:ClearAllPoints()
+        for _, point in ipairs(restore.points) do restore.tooltip:SetPoint(unpack(point)) end
+    end
     signature, source = nil, nil
 end
 local function PositionSource()
-    if not original or not sourcePosition then return end
+    if positioningSource or not original or not sourcePosition then return end
+    positioningSource = true
     local tooltip, pos = original.tooltip, sourcePosition
+    local point, relative, relativePoint, x, y = tooltip:GetPoint(1)
+    if tooltip:GetNumPoints() == 1 and point == "TOPLEFT" and relative == UIParent
+        and relativePoint == "BOTTOMLEFT" and x and y
+        and math.abs(x - pos.x / pos.scale) < 0.01 and math.abs(y - pos.y / pos.scale) < 0.01
+        and math.abs(tooltip:GetScale() - pos.scale) < 0.001 then
+        positioningSource = false
+        return
+    end
     tooltip:SetScale(pos.scale)
     tooltip:ClearAllPoints()
     tooltip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", pos.x / pos.scale, pos.y / pos.scale)
+    positioningSource = false
 end
 local function WantsComparison()
     return IsModifiedClick("COMPAREITEMS") or Call(C_CVar and C_CVar.GetCVarBool or GetCVarBool, "alwaysCompareItems")
@@ -208,6 +239,31 @@ local function Fill(tip, card, candidate)
     tip.gstHeader.icon:SetTexture(card.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
     tip.gstHeader.label:SetText(card.name .. (slotNames[card.slot] and " - " .. slotNames[card.slot] or ""))
     tip:Show()
+    tip.gstHeader.label:SetWidth(math.max(80, tip:GetWidth() - 36))
+    tip.gstHeader:SetHeight(math.max(28, tip.gstHeader.label:GetStringHeight() + 12))
+end
+
+-- Pack actual card widths, keeping the candidate first on every page.
+function Compare.Layout(sizes, availableWidth, availableHeight, gap)
+    local pages, current, x, y, rowHeight = {}, nil, 0, 0, 0
+    local function StartPage()
+        current = {positions = {}, width = sizes[1].width, height = sizes[1].height}
+        pages[#pages + 1] = current
+        current.positions[1] = {index = 1, x = 0, y = 0}
+        x, y, rowHeight = sizes[1].width + gap, 0, sizes[1].height
+    end
+    StartPage()
+    for index = 2, #sizes do
+        local size = sizes[index]
+        if x + size.width > availableWidth then x, y, rowHeight = 0, y + rowHeight + gap, 0 end
+        if y + size.height > availableHeight then StartPage() end
+        current.positions[#current.positions + 1] = {index = index, x = x, y = y}
+        current.width = math.max(current.width, x + size.width)
+        current.height = math.max(current.height, y + size.height)
+        rowHeight = math.max(rowHeight, size.height)
+        x = x + size.width + gap
+    end
+    return pages
 end
 
 local function Render(tooltip, link)
@@ -223,51 +279,55 @@ local function Render(tooltip, link)
     end
     local width, height = UIParent:GetWidth(), UIParent:GetHeight()
     local available = width - 16
-    local maxWidth, maxHeight = tooltip:GetWidth(), tooltip:GetHeight() + 26
+    local headerHeight = 28
+    local maxWidth, maxHeight = tooltip:GetWidth(), tooltip:GetHeight()
     -- Build full tooltips once per item/cache revision, then lay out a page.
     for index, card in ipairs(cards) do
         local tip = GetTip(index)
         tip:SetScale(1)
         Fill(tip, card, link)
         maxWidth = math.max(maxWidth, tip:GetWidth())
-        maxHeight = math.max(maxHeight, tip:GetHeight() + 26)
+        maxHeight = math.max(maxHeight, tip:GetHeight())
+        headerHeight = math.max(headerHeight, tip.gstHeader:GetHeight())
     end
-    local scale = math.min(0.9, available / (2 * (maxWidth + 7)), (height - 24) / maxHeight)
-    local cellWidth, cellHeight = maxWidth * scale + 7, maxHeight * scale + 8
-    local columns = math.max(2, math.min(#cards + 1, math.floor((available + 7) / cellWidth)))
-    local rows = math.max(1, math.floor((height - 16) / cellHeight))
-    local perPage = math.max(1, columns * rows - 1) -- hovered item stays first on every page
-    pageCount = math.max(1, math.ceil(#cards / perPage))
+    local scale = math.min(0.9, (available - 8) / (2 * maxWidth), (height - 24) / (maxHeight + headerHeight))
+    local sizes = {{width = tooltip:GetWidth() * scale, height = (tooltip:GetHeight() + headerHeight) * scale}}
+    for index = 1, #cards do
+        sizes[index + 1] = {width = tips[index]:GetWidth() * scale, height = (tips[index]:GetHeight() + headerHeight) * scale}
+    end
+    local pages = Compare.Layout(sizes, available, height - 16, 8)
+    pageCount = #pages
     page = math.min(page, pageCount)
-    local start = (page - 1) * perPage + 1
-    local x = math.max(8, math.min(original.left, width - columns * cellWidth))
-    local usedRows = math.ceil((math.min(perPage, #cards - start + 1) + 1) / columns)
-    local top = math.max(usedRows * cellHeight + 8, math.min(height - 8, original.top + 26 * scale))
-    sourcePosition = {x = x, y = top - 25 * scale, scale = scale}
+    local layout = pages[page]
+    local x = math.max(8, math.min(original.left, width - layout.width - 8))
+    local top = math.max(layout.height + 8, math.min(height - 8, original.top + headerHeight * scale))
+    sourcePosition = {x = x, y = top - headerHeight * scale, scale = scale}
     PositionSource()
-    for index, tip in ipairs(tips) do
-        if index >= start and index < start + perPage and index <= #cards then
-            local position = index - start + 1
-            local col, row = position % columns, math.floor(position / columns)
+    -- GameTooltip OnHide clears its item data. Do not hide the page's freshly
+    -- filled tooltips before positioning them, or Show() has nothing to render.
+    local visible = {}
+    for _, position in ipairs(layout.positions) do
+        if position.index > 1 then
+            local tip = tips[position.index - 1]
+            visible[tip] = true
+            tip.gstHeader:SetHeight(headerHeight)
             tip:SetScale(scale)
             tip:ClearAllPoints()
-            tip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x + col * cellWidth) / scale,
-                (top - row * cellHeight - 25 * scale) / scale)
+            tip:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x + position.x) / scale,
+                (top - position.y - headerHeight * scale) / scale)
             tip:Show()
-        else tip:Hide() end
+        end
     end
-    if pageCount > 1 then
-        local tip = tips[start]
-        tip.gstHeader.label:SetText(cards[start].name .. string.format("  [%d/%d · Alt]", page, pageCount))
-    end
+    for _, tip in ipairs(tips) do if not visible[tip] then tip:Hide() end end
     SuppressNative(tooltip)
 end
 
 local function Update(tooltip)
     if busy then return end
     if not tooltip or not tooltip:IsShown() or not WantsComparison() then Hide(); return end
-    local ok, _, link = pcall(tooltip.GetItem, tooltip)
-    if not ok or not link then Hide(); return end
+    local link = TooltipLink(tooltip)
+    Compare.lastLink, Compare.lastEquipType = link, link and EquipType(link)
+    if not link then Hide(); return end
     local key = link .. ":" .. Cache.revision .. ":" .. page
     if source == tooltip and signature == key then SuppressNative(tooltip); PositionSource(); return end
     if source ~= tooltip or (signature and signature:sub(1, #link) ~= link) then page = 1 end
@@ -286,21 +346,74 @@ end
 function Compare.NextPage()
     if pageCount > 1 then page = page % pageCount + 1; signature = nil; Update(source) end
 end
+function Compare.Debug()
+    print("GearSetTools: compare module=" .. tostring(Compare.ready == true)
+        .. ", active=" .. tostring(source ~= nil) .. ", cards=" .. #cards)
+    print("GearSetTools: comparison modifier=" .. tostring(IsModifiedClick("COMPAREITEMS"))
+        .. ", always compare=" .. tostring(Call(C_CVar and C_CVar.GetCVarBool or GetCVarBool, "alwaysCompareItems")))
+    if lastError then print("GearSetTools: comparison last error: " .. lastError) end
+    print("GearSetTools: last candidate=" .. tostring(Compare.lastLink)
+        .. ", equip type=" .. tostring(Compare.lastEquipType))
+    for _, name in ipairs({"GameTooltip", "GameTooltipTooltip", "ItemRefTooltip"}) do
+        local tooltip = _G[name]
+        if tooltip then
+            local link = TooltipLink(tooltip)
+            print("GearSetTools: " .. name .. " shown=" .. tostring(tooltip:IsShown())
+                .. ", item=" .. tostring(link) .. ", type=" .. tostring(link and EquipType(link)))
+        end
+    end
+    for index, tip in ipairs(tips) do
+        if index <= #cards then
+            print("GearSetTools: comparison " .. index .. " shown=" .. tostring(tip:IsShown())
+                .. ", item=" .. tostring(TooltipLink(tip)))
+        end
+    end
+end
+function Compare.DebugHover()
+    print("GearSetTools: hover the item within 3 seconds.")
+    C_Timer.After(3, function() xpcall(Compare.Debug, ReportError) end)
+end
 local watcher = CreateFrame("Frame")
 local elapsed, altWasDown = 0, false
-watcher:SetScript("OnUpdate", function(_, delta)
+local function OnUpdate(_, delta)
+    -- Reapply before this frame is drawn, including engine-driven anchoring
+    -- that does not call the public SetPoint method. Data refresh stays throttled.
+    if original and original.tooltip:IsShown() and WantsComparison() then PositionSource() end
     elapsed = elapsed + delta
     if elapsed < 0.1 then return end
     elapsed = 0
     local alt = IsAltKeyDown()
     if alt and not altWasDown and source then Compare.NextPage() end
     altWasDown = alt
-    local tooltip = GameTooltip and GameTooltip:IsShown() and GameTooltip
-        or ItemRefTooltip and ItemRefTooltip:IsShown() and ItemRefTooltip
+    local tooltip
+    for _, name in ipairs({"GameTooltip", "GameTooltipTooltip", "ItemRefTooltip"}) do
+        local candidate = _G[name]
+        if candidate and candidate:IsShown() and TooltipLink(candidate) then tooltip = candidate; break end
+    end
     Update(tooltip)
+end
+watcher:SetScript("OnUpdate", function(self, delta)
+    xpcall(function() OnUpdate(self, delta) end, ReportError)
 end)
+for _, name in ipairs({"GameTooltip", "GameTooltipTooltip", "ItemRefTooltip"}) do
+    local tooltip = _G[name]
+    if tooltip then
+    -- Blizzard reanchors a live item tooltip repeatedly. Correct that in the
+    -- same call, rather than visibly moving it back on the next 0.1s timer tick.
+    for _, method in ipairs({"SetPoint", "SetAnchorType"}) do
+        if type(tooltip[method]) == "function" then
+            hooksecurefunc(tooltip, method, function()
+                if original and original.tooltip == tooltip then xpcall(PositionSource, ReportError) end
+            end)
+        end
+    end
+    end
+end
 if GameTooltip_ShowCompareItem then
     hooksecurefunc("GameTooltip_ShowCompareItem", function(tooltip)
-        if tooltip == GameTooltip or tooltip == ItemRefTooltip then Update(tooltip) end
+        if tooltip == GameTooltip or tooltip == GameTooltipTooltip or tooltip == ItemRefTooltip then
+            xpcall(function() Update(tooltip) end, ReportError)
+        end
     end)
 end
+Compare.ready = true

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.3 ? 2026-11-15
+
+Tooltip stability and layout fixes, verified in game.
+
+- Fix disappearing comparison tooltips: retain item data while arranging visible cards.
+- Prevent the hovered tooltip from jumping during native tooltip updates.
+- Use actual tooltip widths for consistent spacing and expand headers for wrapped set names.
+- Restore item badges on anonymous buttons in the combined backpack.
+- Support modern tooltip payloads, GUID links, and embedded item tooltips.
+- Improve comparison error reporting and add `/gst comparedebug`.
+- Extend tests for complete addon startup, tooltip clearing on hide, pagination, and anchor stability.
+
+Versions 0.2.3?0.2.7 used during local debugging were not public releases;
+these fixes are consolidated into this single public 0.2.3 release.
+
 ## 0.2.2 — 2026-11-15
 
 First public beta for WoW Forever (interface 16001).

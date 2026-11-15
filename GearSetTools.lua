@@ -170,15 +170,16 @@ local function ScanButtons()
                 for itemFirst, itemSecond in frame:EnumerateValidItems() do
                     local button = itemSecond or itemFirst
                     if type(button) == "table" or type(button) == "userdata" then
-                        local bag = button.GetBagID and button:GetBagID()
-                            or (frame.GetID and frame:GetID())
-                        local slot = button.GetID and button:GetID()
-                        local itemID = bag and slot and ContainerItemID(bag, slot)
-                        Paint(button, itemID)
+                        Paint(button, ButtonItemID(button))
                     end
                 end
             end
         end
+    end
+    -- Combined bags can use pooled anonymous item buttons rather than the
+    -- legacy ContainerFrameNItemM names, and may not be in the enumerator.
+    if ContainerFrameCombinedBags and ContainerFrameCombinedBags:IsShown() then
+        ScanBankTree(ContainerFrameCombinedBags, 0)
     end
     -- Fallback for the standard Blizzard bag/bank item button names.
     for frameIndex = 1, (NUM_CONTAINER_FRAMES or 13) do
@@ -265,8 +266,10 @@ SLASH_GEARSETTOOLS1 = "/gst"
 SLASH_GEARSETTOOLS2 = "/gearsettools"
 local function HandleCommand(msg)
     msg = (msg or ""):lower():match("^%s*(.-)%s*$")
-    print("GearSetTools 0.2.2: command received.")
-    if msg == "next" and NS.Compare then
+    print("GearSetTools 0.2.3: command received.")
+    if msg == "comparedebug" and NS.Compare then
+        NS.Compare.DebugHover()
+    elseif msg == "next" and NS.Compare then
         NS.Compare.NextPage()
     elseif msg == "cache" and NS.Cache then
         NS.Cache.Refresh()
@@ -275,6 +278,8 @@ local function HandleCommand(msg)
         print("GearSetTools: point at the bank item within 3 seconds.")
         C_Timer.After(3, function() xpcall(InspectMouse, ReportError) end)
     elseif msg == "debug" then
+        if NS.Compare then NS.Compare.Debug()
+        else print("GearSetTools: comparison module did not load.") end
         if NS.Cache then NS.Cache.Debug() end
         print("GearSetTools: C_EquipmentSet=" .. tostring(C_EquipmentSet ~= nil)
             .. ", C_Container=" .. tostring(C_Container ~= nil))
@@ -298,6 +303,7 @@ local function HandleCommand(msg)
         print("GearSetTools: bank buttons=" .. bankButtons .. ", set items in bank=" .. bankMatches)
         local found, marked = ScanBankTree(BankFrame, 0)
         print("GearSetTools: bank tree items=" .. found .. ", marked=" .. marked)
+        Refresh()
     else
         Refresh()
         print("GearSetTools: refreshed. Use /gst debug to inspect set item count.")
@@ -314,7 +320,7 @@ GST:SetScript("OnEvent", function(self, event)
     xpcall(function() OnEvent(self, event) end, ReportError)
 end)
 for _, event in ipairs({
-    "PLAYER_LOGIN", "BAG_UPDATE_DELAYED", "BAG_UPDATE",
+    "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "BAG_UPDATE",
     "EQUIPMENT_SETS_CHANGED", "BANKFRAME_OPENED", "BANKFRAME_CLOSED",
     "PLAYERBANKSLOTS_CHANGED",
 }) do
